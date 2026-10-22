@@ -3,17 +3,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.task import Task
+from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate
 
 
-def get_all_tasks(db: Session):
-    statement = select(Task).order_by(Task.id)
-
-    return db.scalars(statement).all()
-
-
-def get_task_by_id(db: Session, task_id: int):
-    task = db.get(Task, task_id)
+def get_owned_task(
+    db: Session,
+    task_id: int,
+    current_user: User
+) -> Task:
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_id,
+            Task.user_id == current_user.id
+        )
+    )
 
     if task is None:
         raise HTTPException(
@@ -24,11 +28,29 @@ def get_task_by_id(db: Session, task_id: int):
     return task
 
 
-def create_task(db: Session, data: TaskCreate):
+def get_all_tasks(db: Session, current_user: User):
+    statement = select(Task).where(
+        Task.user_id == current_user.id
+    )
+
+    return db.scalars(statement).all()
+
+
+def get_task_by_id(
+    db: Session,
+    task_id: int,
+    current_user: User
+):
+    return get_owned_task(db, task_id, current_user)
+
+def create_task(
+    db: Session,
+    data: TaskCreate,
+    current_user: User
+):
     new_task = Task(
-        name=data.name,
-        description=data.description,
-        completed=data.completed
+        **data.model_dump(),
+        user_id=current_user.id
     )
 
     db.add(new_task)
@@ -37,29 +59,30 @@ def create_task(db: Session, data: TaskCreate):
 
     return new_task
 
+def update_task(
+    db: Session,
+    task_id: int,
+    data: TaskUpdate,
+    current_user: User
+):
+    task = get_owned_task(db, task_id, current_user)
 
-def update_task(db: Session, task_id: int, data: TaskUpdate):
-    task = get_task_by_id(db, task_id)
-
-    update_data = data.model_dump(exclude_unset=True)
-
-    if any(value is None for value in update_data.values()):
-        raise HTTPException(
-            status_code=422,
-            detail="Task fields cannot be null"
-        )
-
-    for key, value in update_data.items():
-        setattr(task, key, value)
+    for field, value in data.model_dump(
+        exclude_unset=True
+    ).items():
+        setattr(task, field, value)
 
     db.commit()
     db.refresh(task)
 
     return task
 
-
-def delete_task(db: Session, task_id: int):
-    task = get_task_by_id(db, task_id)
+def delete_task(
+    db: Session,
+    task_id: int,
+    current_user: User
+):
+    task = get_owned_task(db, task_id, current_user)
 
     db.delete(task)
     db.commit()
